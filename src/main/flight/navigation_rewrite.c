@@ -1037,15 +1037,21 @@ static navigationFSMEvent_t navOnEnteringState_NAV_STATE_RTH_3D_CLIMB_TO_SAFE_AL
     }
 
     if (((posControl.actualState.pos.V.Z - posControl.homeWaypointAbove.pos.V.Z) > -50.0f) || (!navConfig()->general.flags.rth_climb_first)) {
-        // For airplane we should finish climb first as it can take some distance
+        // Delayed initialization for RTH sanity check on airplanes - allow to finish climb first as it can take some distance
         if (STATE(FIXED_WING)) {
-            // Initialize RTH sanity check to prevent fly-aways on RTH
             initializeRTHSanityChecker(&posControl.actualState.pos);
         }
 
         return NAV_FSM_EVENT_SUCCESS;   // NAV_STATE_RTH_3D_HEAD_HOME
     }
     else {
+        /* For multi-rotors execute sanity check during initial ascent as well */
+        if (!STATE(FIXED_WING)) {
+            if (!validateRTHSanityChecker()) {
+                return NAV_FSM_EVENT_SWITCH_TO_EMERGENCY_LANDING;
+            }
+        }
+
         // Climb to safe altitude and turn to correct direction
         if (navConfig()->general.flags.rth_tail_first && !STATE(FIXED_WING)) {
             setDesiredPosition(&posControl.homeWaypointAbove.pos, 0, NAV_POS_UPDATE_Z | NAV_POS_UPDATE_BEARING_TAIL_FIRST);
@@ -1115,6 +1121,10 @@ static navigationFSMEvent_t navOnEnteringState_NAV_STATE_RTH_3D_HOVER_PRIOR_TO_L
             resetLandingDetector();
             return NAV_FSM_EVENT_SUCCESS;
         }
+        else if (!validateRTHSanityChecker()) {
+            // Continue to check for RTH sanity during pre-landing hover
+            return NAV_FSM_EVENT_SWITCH_TO_EMERGENCY_LANDING;
+        }
         else {
             setDesiredPosition(&posControl.homeWaypointAbove.pos, posControl.homeWaypointAbove.yaw, NAV_POS_UPDATE_XY | NAV_POS_UPDATE_Z | NAV_POS_UPDATE_HEADING);
             return NAV_FSM_EVENT_NONE;
@@ -1133,6 +1143,11 @@ static navigationFSMEvent_t navOnEnteringState_NAV_STATE_RTH_3D_LANDING(navigati
         return NAV_FSM_EVENT_SUCCESS;
     }
     else {
+        if (!validateRTHSanityChecker()) {
+            // Continue to check for RTH sanity during pre-landing hover
+            return NAV_FSM_EVENT_SWITCH_TO_EMERGENCY_LANDING;
+        }
+
         if (STATE(FIXED_WING)) {
             // FIXME: Continue loitering at home altitude
             return NAV_FSM_EVENT_NONE;
